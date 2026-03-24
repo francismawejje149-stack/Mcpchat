@@ -27,6 +27,12 @@ type AgentResult = {
   approvalRequest?: { id: string; toolKey: string; args: unknown; reason?: string };
 };
 
+type ApprovedExecution = {
+  requestId: string;
+  toolKey: string;
+  argsHash: string;
+};
+
 export async function runAgent(
   sessionId: string,
   userMessage: string,
@@ -62,6 +68,23 @@ export async function runAgent(
 
   const toolStatus: string[] = [];
   const generatedCards: any[] = [];
+  let approvedExecution: ApprovedExecution | null = null;
+
+  if (opts?.approvedRequestId) {
+    const approvedRequest = await db.approvalRequest.findUnique({ where: { id: opts.approvedRequestId } });
+    if (
+      approvedRequest &&
+      approvedRequest.sessionId === sessionId &&
+      approvedRequest.status === "approved" &&
+      approvedRequest.toolKey === opts.approvedToolKey
+    ) {
+      approvedExecution = {
+        requestId: approvedRequest.id,
+        toolKey: approvedRequest.toolKey,
+        argsHash: stableStringify(approvedRequest.args)
+      };
+    }
+  }
 
   for (let step = 0; step < 6; step++) {
     const completion = await client.chat.completions.create({
@@ -99,8 +122,10 @@ export async function runAgent(
         continue;
       }
 
-      const isApprovedTool = Boolean(opts?.approvedRequestId && opts?.approvedToolKey && opts.approvedToolKey === runtimeTool.key);
-      const approvedArgsMatch = isApprovedTool && stableStringify(opts?.approvedArgs) === stableStringify(args);
+      const approvedArgsMatch =
+        approvedExecution?.toolKey === runtimeTool.key &&
+        approvedExecution.argsHash === stableStringify(args);
+
       if (runtimeTool.approvalMode === "ask" && !approvedArgsMatch) {
         const req = await createApprovalRequest(sessionId, runtimeTool.key, args, "This action may have side effects.");
         const pending: AgentResult = {
@@ -111,6 +136,10 @@ export async function runAgent(
         };
         await db.chatMessage.create({ data: { sessionId, role: "assistant", content: pending.text, structured: pending as any } });
         return pending;
+      }
+
+      if (approvedArgsMatch && approvedExecution) {
+        toolStatus.push(`Using approval ${approvedExecution.requestId} for ${runtimeTool.label}.`);
       }
 
       const start = Date.now();
