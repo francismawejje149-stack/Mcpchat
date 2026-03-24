@@ -1,0 +1,229 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+enum ApprovalMode {
+  auto
+  ask
+  deny
+}
+
+enum SideEffectLevel {
+  read
+  low
+  high
+}
+
+enum MessageRole {
+  user
+  assistant
+  tool
+  system
+}
+
+enum MCPTransport {
+  http
+  sse
+  stdio
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model AdminSession {
+  id        String   @id
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+model CompanyProfile {
+  id               String   @id @default(cuid())
+  companyName      String   @default("Acme Inc")
+  logoUrl          String?
+  brandColor       String   @default("#0ea5e9")
+  accentColor      String   @default("#14b8a6")
+  tagline          String?
+  description      String?
+  welcomeMessage   String   @default("Hi! I can help with company information.")
+  suggestedPrompts Json?
+  updatedAt        DateTime @updatedAt
+}
+
+model ProviderSettings {
+  id             String   @id @default(cuid())
+  label          String
+  baseUrl        String
+  apiKey         String?
+  model          String
+  defaultHeaders Json?
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model AssistantSettings {
+  id                 String   @id @default(cuid())
+  systemPrompt       String
+  fallbackBehavior   String   @default("If tools fail, explain briefly and offer alternatives.")
+  toolInstructions   String   @default("Prefer tools for company or app-specific facts.")
+  brandTone          String   @default("Professional, concise, helpful.")
+  safetyInstructions String   @default("Never fabricate data. Ask for approval on side effects.")
+  cardFirst          Boolean  @default(true)
+  updatedAt          DateTime @updatedAt
+}
+
+model Collection {
+  id              String             @id @default(cuid())
+  name            String
+  slug            String             @unique
+  description     String?
+  enabled         Boolean            @default(true)
+  defaultRenderer String?
+  fields          CollectionField[]
+  records         CollectionRecord[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+}
+
+model CollectionField {
+  id           String   @id @default(cuid())
+  collectionId String
+  name         String
+  key          String
+  type         String
+  required     Boolean  @default(false)
+  position     Int      @default(0)
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+}
+
+model CollectionRecord {
+  id           String   @id @default(cuid())
+  collectionId String
+  data         Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+}
+
+model CardTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  type        String
+  config      Json?
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model QuestionMapping {
+  id            String   @id @default(cuid())
+  question      String
+  collectionId  String?
+  preferredTool String?
+  cardType      String?
+  systemHint    String?
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model MCPServer {
+  id                  String        @id @default(cuid())
+  name                String
+  description         String?
+  enabled             Boolean       @default(true)
+  transport           MCPTransport  @default(http)
+  endpointUrl         String?
+  command             String?
+  args                Json?
+  headers             Json?
+  authType            String?
+  authToken           String?
+  retryCount          Int           @default(2)
+  timeoutMs           Int           @default(15000)
+  defaultApprovalMode ApprovalMode  @default(ask)
+  tools               MCPTool[]
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+}
+
+model MCPTool {
+  id            String          @id @default(cuid())
+  serverId      String
+  toolName      String
+  label         String
+  description   String?
+  inputSchema   Json?
+  outputHints   Json?
+  enabled       Boolean         @default(true)
+  sideEffect    SideEffectLevel @default(read)
+  approvalMode  ApprovalMode    @default(ask)
+  readOnly      Boolean         @default(true)
+  icon          String?
+  cardRenderer  String?
+  lastSyncedAt  DateTime?
+  server        MCPServer       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([serverId, toolName])
+}
+
+model ToolApprovalPolicy {
+  id           String         @id @default(cuid())
+  toolKey      String         @unique
+  approvalMode ApprovalMode   @default(ask)
+  sideEffect   SideEffectLevel @default(read)
+  readOnly     Boolean        @default(true)
+  updatedAt    DateTime       @updatedAt
+}
+
+model ChatSession {
+  id        String        @id @default(cuid())
+  title     String?
+  messages  ChatMessage[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+}
+
+model ChatMessage {
+  id          String      @id @default(cuid())
+  sessionId   String
+  role        MessageRole
+  content     String
+  structured  Json?
+  toolName    String?
+  toolCallId  String?
+  createdAt   DateTime    @default(now())
+  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+model ToolExecutionLog {
+  id          String   @id @default(cuid())
+  toolKey     String
+  args        Json?
+  result      Json?
+  success     Boolean
+  error       String?
+  latencyMs   Int?
+  createdAt   DateTime @default(now())
+}
+
+model ApprovalRequest {
+  id           String       @id @default(cuid())
+  sessionId     String
+  toolKey       String
+  args          Json
+  status        String      @default("pending")
+  reason        String?
+  expiresAt     DateTime
+  createdAt     DateTime    @default(now())
+  processedAt   DateTime?
+}
