@@ -12,6 +12,14 @@ const DEFAULT_SYSTEM_PROMPT = `You are a company assistant.
 - Prefer cards and structured responses.
 Always return final response as strict JSON: {"text": string, "cards": Card[]}.`;
 
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`).join(",")}}`;
+}
+
 type AgentResult = {
   text: string;
   cards: any[];
@@ -19,7 +27,11 @@ type AgentResult = {
   approvalRequest?: { id: string; toolKey: string; args: unknown; reason?: string };
 };
 
-export async function runAgent(sessionId: string, userMessage: string, opts?: { approvedRequestId?: string; approvedToolKey?: string }): Promise<AgentResult> {
+export async function runAgent(
+  sessionId: string,
+  userMessage: string,
+  opts?: { approvedRequestId?: string; approvedToolKey?: string; approvedArgs?: unknown }
+): Promise<AgentResult> {
   const provider = await db.providerSettings.findFirst({ where: { enabled: true }, orderBy: { updatedAt: "desc" } });
   if (!provider) throw new Error("No enabled provider configured");
 
@@ -88,7 +100,8 @@ export async function runAgent(sessionId: string, userMessage: string, opts?: { 
       }
 
       const isApprovedTool = Boolean(opts?.approvedRequestId && opts?.approvedToolKey && opts.approvedToolKey === runtimeTool.key);
-      if (runtimeTool.approvalMode === "ask" && !isApprovedTool) {
+      const approvedArgsMatch = isApprovedTool && stableStringify(opts?.approvedArgs) === stableStringify(args);
+      if (runtimeTool.approvalMode === "ask" && !approvedArgsMatch) {
         const req = await createApprovalRequest(sessionId, runtimeTool.key, args, "This action may have side effects.");
         const pending: AgentResult = {
           text: `I need your approval before I run ${runtimeTool.label}.`,

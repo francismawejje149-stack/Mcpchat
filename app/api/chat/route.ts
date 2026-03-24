@@ -25,7 +25,8 @@ export async function POST(req: NextRequest) {
 
       const response = await runAgent(session.id, `Continue and execute approved tool ${request.toolKey}`, {
         approvedRequestId: body.approvalRequestId,
-        approvedToolKey: request.toolKey
+        approvedToolKey: request.toolKey,
+        approvedArgs: request.args
       });
       return ok({ sessionId: session.id, ...response });
     }
