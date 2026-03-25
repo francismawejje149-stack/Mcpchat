@@ -1,7 +1,8 @@
-import { ApprovalMode, MCPTool, SideEffectLevel } from "@prisma/client";
 import { z } from "zod";
-import { db } from "./db";
-import { executeMcpTool } from "./mcp";
+import vackerProfile from "@/data/vacker-company.json";
+
+export type ApprovalMode = "auto" | "ask" | "deny";
+export type SideEffectLevel = "read" | "low" | "high";
 
 type RuntimeTool = {
   key: string;
@@ -15,70 +16,93 @@ type RuntimeTool = {
   execute: (args: any) => Promise<unknown>;
 };
 
-function buildCollectionSchema(fields: { key: string; type: string }[]) {
-  const props: Record<string, unknown> = {
-    query: { type: "string", description: "Free text query" },
-    limit: { type: "number", default: 10 }
-  };
-  for (const field of fields) props[field.key] = { type: "string" };
-  return { type: "object", properties: props, additionalProperties: false };
+function searchByQuery<T extends Record<string, unknown>>(rows: T[], query?: string) {
+  if (!query) return rows;
+  const q = query.toLowerCase();
+  return rows.filter((row) => JSON.stringify(row).toLowerCase().includes(q));
 }
 
-export async function getInternalCollectionTools(): Promise<RuntimeTool[]> {
-  const collections = await db.collection.findMany({ where: { enabled: true }, include: { fields: true } });
-  return collections.map((collection) => ({
-    key: `internal.${collection.slug}`,
-    label: `Search ${collection.name}`,
-    description: `Search company collection: ${collection.name}`,
-    schema: buildCollectionSchema(collection.fields),
-    approvalMode: "auto",
-    sideEffect: "read",
-    readOnly: true,
-    cardRenderer: collection.defaultRenderer,
-    execute: async (args) => {
-      const records = await db.collectionRecord.findMany({ where: { collectionId: collection.id }, take: 100 });
-      const query = String(args?.query || "").toLowerCase();
-      const filtered = records
-        .map((r) => r.data as Record<string, any>)
-        .filter((row) => {
-          const text = JSON.stringify(row).toLowerCase();
-          if (query && !text.includes(query)) return false;
-          for (const [k, v] of Object.entries(args || {})) {
-            if (["query", "limit"].includes(k) || v === undefined || v === null || v === "") continue;
-            if (!String(row[k] ?? "").toLowerCase().includes(String(v).toLowerCase())) return false;
-          }
-          return true;
-        });
-      return { collection: collection.name, items: filtered.slice(0, Number(args?.limit || 10)) };
+const vackerProfileTool: RuntimeTool = {
+  key: "internal.vacker_profile",
+  label: "Vacker Company Profile",
+  description: "Get details about Vacker Advertising in Uganda including contact and social links.",
+  schema: {
+    type: "object",
+    properties: {
+      section: {
+        type: "string",
+        enum: ["overview", "services", "contact", "social", "clients", "all"],
+        default: "overview"
+      },
+      query: { type: "string", description: "Optional keyword filter" },
+      limit: { type: "number", default: 10 }
+    },
+    additionalProperties: false
+  },
+  approvalMode: "auto",
+  sideEffect: "read",
+  readOnly: true,
+  cardRenderer: "profile",
+  execute: async (args) => {
+    const section = String(args?.section || "overview");
+    const limit = Number(args?.limit || 10);
+    const query = args?.query ? String(args.query) : "";
+
+    if (section === "services") {
+      return {
+        section,
+        items: searchByQuery(vackerProfile.services, query).slice(0, limit)
+      };
     }
-  }));
-}
 
-function mapMcpTool(tool: MCPTool, server: any): RuntimeTool {
-  return {
-    key: `mcp.${server.id}.${tool.toolName}`,
-    label: tool.label,
-    description: tool.description || `${server.name} - ${tool.toolName}`,
-    schema: (tool.inputSchema as Record<string, unknown>) ?? { type: "object", properties: {} },
-    approvalMode: tool.approvalMode,
-    sideEffect: tool.sideEffect,
-    readOnly: tool.readOnly,
-    cardRenderer: tool.cardRenderer,
-    execute: async (args) => executeMcpTool(server, tool.toolName, args)
-  };
-}
+    if (section === "social") {
+      return {
+        section,
+        items: searchByQuery(vackerProfile.socialMedia, query).slice(0, limit)
+      };
+    }
+
+    if (section === "clients") {
+      return {
+        section,
+        items: searchByQuery(vackerProfile.notableClients.map((name) => ({ name })), query).slice(0, limit)
+      };
+    }
+
+    if (section === "contact") {
+      const contactRows = [
+        { type: "address", value: vackerProfile.contact.address },
+        ...vackerProfile.contact.phones.map((phone) => ({ type: "phone", value: phone })),
+        { type: "email", value: vackerProfile.contact.email },
+        { type: "website", value: vackerProfile.contact.website }
+      ];
+      return {
+        section,
+        items: searchByQuery(contactRows, query).slice(0, limit)
+      };
+    }
+
+    if (section === "all") {
+      return vackerProfile;
+    }
+
+    const overviewRows = [
+      { label: "company", value: vackerProfile.companyName },
+      { label: "tagline", value: vackerProfile.tagline },
+      { label: "description", value: vackerProfile.description },
+      { label: "founded", value: String(vackerProfile.founded) },
+      { label: "headquarters", value: vackerProfile.headquarters }
+    ];
+
+    return {
+      section: "overview",
+      items: searchByQuery(overviewRows, query).slice(0, limit)
+    };
+  }
+};
 
 export async function getAllRuntimeTools(): Promise<RuntimeTool[]> {
-  const internal = await getInternalCollectionTools();
-  const mcpServers = await db.mCPServer.findMany({ where: { enabled: true }, include: { tools: { where: { enabled: true } } } });
-  const mcp = mcpServers.flatMap((s) => s.tools.map((t) => mapMcpTool(t, s)));
-  const policies = await db.toolApprovalPolicy.findMany();
-  const policyMap = new Map(policies.map((p) => [p.toolKey, p]));
-  return [...internal, ...mcp].map((tool) => {
-    const policy = policyMap.get(tool.key);
-    if (!policy) return tool;
-    return { ...tool, approvalMode: policy.approvalMode, sideEffect: policy.sideEffect, readOnly: policy.readOnly };
-  });
+  return [vackerProfileTool];
 }
 
 export function buildOpenAITools(runtimeTools: RuntimeTool[]) {

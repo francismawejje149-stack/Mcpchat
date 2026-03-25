@@ -1,0 +1,46 @@
+{
+  "companyName": "Vacker Advertising (Vacker Company Limited)",
+  "tagline": "Printing, Branding & Outdoor Advertising",
+  "description": "Vacker is an outdoor and indoor advertising company based in Uganda, incorporated in 2014, focused on out-of-home advertising, digital signage, creative and branding services.",
+  "founded": 2014,
+  "headquarters": "Kampala, Ntinda, Uganda",
+  "contact": {
+    "address": "Plot 54, Factory Road, Ntinda Industrial Area, Kampala, Uganda",
+    "phones": ["(+256) 039-3224-054", "+256 702 394117"],
+    "email": "info@vacker.co.ug",
+    "website": "https://vacker.co.ug",
+    "contactPage": "https://vacker.co.ug/contact-us/"
+  },
+  "services": [
+    "Outdoor & Indoor Advertising",
+    "Large Format Printing",
+    "Branding Services",
+    "Digital Signage",
+    "Creative Services"
+  ],
+  "socialMedia": [
+    {
+      "platform": "LinkedIn",
+      "url": "https://ug.linkedin.com/company/vacker-company-limited"
+    }
+  ],
+  "notableClients": [
+    "Hot Loaf",
+    "ISBAT University",
+    "Maya Agro Industries",
+    "Zuku Digital TV",
+    "Azam",
+    "Uganda Police",
+    "Nivea",
+    "MultiChoice",
+    "Liquid Telecom",
+    "Absa",
+    "DKT International"
+  ],
+  "sourceNotes": [
+    "https://vacker.co.ug/",
+    "https://vacker.co.ug/contact-us/",
+    "https://vacker.co.ug/portfolio/super-structure-kabalagala/",
+    "https://ug.linkedin.com/company/vacker-company-limited"
+  ]
+}
