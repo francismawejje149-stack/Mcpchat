@@ -51,7 +51,10 @@ const vackerProfileTool: RuntimeTool = {
     if (section === "services") {
       return {
         section,
-        items: searchByQuery(vackerProfile.services, query).slice(0, limit)
+        items: searchByQuery(
+          vackerProfile.services.map((name) => ({ name })),
+          query
+        ).slice(0, limit)
       };
     }
 
