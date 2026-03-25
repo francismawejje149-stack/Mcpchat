@@ -5,6 +5,7 @@ type AnyObj = Record<string, any>;
 function inferCardType(items: AnyObj[]): "grid" | "profile" | "list" | "stat" | "map" | "generic" {
   if (!items.length) return "generic";
   const sample = items[0];
+  if (!sample || typeof sample !== "object" || Array.isArray(sample)) return "list";
   if ("value" in sample && "label" in sample) return "stat";
   if ("latitude" in sample || "longitude" in sample || "address" in sample) return "map";
   if ("role" in sample || "email" in sample || "phone" in sample) return "profile";
@@ -28,7 +29,11 @@ export function tryParseAssistantJson(text: string | null | undefined) {
 
 export function normalizeToolResultToCards(toolName: string, result: unknown, preferredType?: string | null) {
   const obj = (result ?? {}) as AnyObj;
-  const items = Array.isArray(obj.items) ? obj.items : Array.isArray(obj.data) ? obj.data : [];
+  const rawItems = Array.isArray(obj.items) ? obj.items : Array.isArray(obj.data) ? obj.data : [];
+  const items = rawItems.map((item) => {
+    if (item && typeof item === "object" && !Array.isArray(item)) return item;
+    return { value: String(item) };
+  });
   const cardType = (preferredType as any) || inferCardType(items);
   return [
     {
