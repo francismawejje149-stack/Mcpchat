@@ -1,54 +1,49 @@
-# Company Assistant (Next.js 14 + Prisma + MCP)
+# Vacker Advertising Assistant (Next.js 14)
 
-Production-ready starter for a ChatGPT-style company assistant.
+This app is now configured to act as a chatbot assistant for **Vacker Advertising (Uganda)** using a local JSON knowledge source instead of a database-backed company dataset.
 
 ## Stack
 - Next.js 14 App Router + TypeScript
 - Tailwind CSS + shadcn-style components
-- Prisma + SQLite
-- Zustand + Framer Motion
-- OpenAI npm SDK (dynamic baseURL/apiKey)
+- OpenAI npm SDK
 - Zod validation
+- Local JSON knowledge base (`data/vacker-company.json`)
 
 ## Run locally
 ```bash
 npm install
-npx prisma migrate dev --name init
 npm run dev
 ```
 
 Open:
 - Chat UI: `http://localhost:3000/`
-- Admin: `http://localhost:3000/admin`
 
-## Admin first run
-1. Visit `/admin`.
-2. Create admin password.
-3. Configure company profile + provider settings.
-4. Add collections and records.
-5. Optionally add MCP servers and sync tools.
+## Environment variables
+Create `.env.local` with:
 
-## MCP transport notes
-- HTTP and SSE-style endpoints are supported through HTTP calls.
-- Stdio/local command transport is modeled in schema and admin UI, but direct execution is intentionally blocked in route runtime by default for security/deployment portability.
-
-## Architecture overview
-- Dynamic tool registry merges:
-  - Internal generated tools from enabled collections
-  - Discovered MCP tools from enabled servers
-- Agent loop in `lib/agent.ts` handles multi-step tool calling and approval checks.
-- Approval requests persisted in DB and shown in chat UI.
-- Structured card payloads rendered by components in `components/cards`.
-
-## Security basics
-- Admin password hashed with bcrypt.
-- Session cookie + DB-backed admin sessions.
-- Provider and MCP secrets remain server-side.
-- Approval policy enforcement before mutating tools execute.
-
-## Push to GitHub
-If your repo is new, run:
 ```bash
-git remote add origin https://github.com/francismawejje149-stack/Mcpchat.git
-git push -u origin HEAD
+OPENAI_API_KEY=your_key_here
+OPENAI_MODEL=gpt-4o-mini
+# Optional
+OPENAI_BASE_URL=https://api.openai.com/v1
 ```
+
+## JSON knowledge mode
+- Chat endpoint (`app/api/chat/route.ts`) runs without DB-backed sessions.
+- Assistant knowledge comes from `data/vacker-company.json`.
+- Internal tool `internal.vacker_profile` serves:
+  - overview
+  - contact details
+  - services
+  - social media links
+  - notable clients
+
+## Data source notes
+The Vacker profile JSON was populated from publicly available sources:
+- https://vacker.co.ug/
+- https://vacker.co.ug/contact-us/
+- https://vacker.co.ug/portfolio/super-structure-kabalagala/
+- https://ug.linkedin.com/company/vacker-company-limited
+
+## Important
+Some admin/database APIs are still present in the codebase from the original scaffold. The chat assistant path has been switched to JSON-backed operation for company data and sessions.

@@ -1,62 +1,35 @@
-import { db } from "./db";
 import { getOpenAIClient } from "./openai";
 import { buildOpenAITools, getAllRuntimeTools, resolveToolByOpenAIName } from "./tools";
-import { createApprovalRequest } from "./approvals";
 import { normalizeFinalAssistantResponse, normalizeToolResultToCards } from "./normalizer";
 
-const DEFAULT_SYSTEM_PROMPT = `You are a company assistant.
-- Be concise and helpful.
-- Use tools for company facts and connected MCP apps.
-- Never fabricate unavailable data.
-- For side-effects, request approval.
+const DEFAULT_SYSTEM_PROMPT = `You are the official assistant for Vacker Advertising in Uganda.
+- Be concise, helpful, and commercial-friendly.
+- Use the internal company profile tool for company facts, contacts, services, and social media links.
+- Never fabricate unavailable data; if unknown, say so and offer the official contact channels.
 - Prefer cards and structured responses.
 Always return final response as strict JSON: {"text": string, "cards": Card[]}.`;
-
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
-
-  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
-  return `{${entries.map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`).join(",")}}`;
-}
 
 type AgentResult = {
   text: string;
   cards: any[];
   toolStatus: string[];
-  approvalRequest?: { id: string; toolKey: string; args: unknown; reason?: string };
 };
 
-export async function runAgent(
-  sessionId: string,
-  userMessage: string,
-  opts?: { approvedRequestId?: string; approvedToolKey?: string; approvedArgs?: unknown }
-): Promise<AgentResult> {
-  const provider = await db.providerSettings.findFirst({ where: { enabled: true }, orderBy: { updatedAt: "desc" } });
-  if (!provider) throw new Error("No enabled provider configured");
-
-  const [settings, mappings] = await Promise.all([
-    db.assistantSettings.findFirst(),
-    db.questionMapping.findMany({ where: { enabled: true }, take: 10, orderBy: { updatedAt: "desc" } })
-  ]);
-
-  const mappingHints = mappings
-    .map((m) => `Q: ${m.question} -> collection:${m.collectionId ?? "n/a"}, tool:${m.preferredTool ?? "n/a"}, card:${m.cardType ?? "n/a"}, hint:${m.systemHint ?? ""}`)
-    .join("\n");
+export async function runAgent(sessionId: string, userMessage: string): Promise<AgentResult> {
+  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const baseUrl = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY is required");
 
   const runtimeTools = await getAllRuntimeTools();
   const oaTools = buildOpenAITools(runtimeTools);
-  const history = await db.chatMessage.findMany({ where: { sessionId }, orderBy: { createdAt: "asc" }, take: 30 });
+  const client = getOpenAIClient({ model, baseUrl, apiKey, defaultHeaders: null });
 
-  await db.chatMessage.create({ data: { sessionId, role: "user", content: userMessage } });
-
-  const client = getOpenAIClient(provider);
   const messages: any[] = [
     {
       role: "system",
-      content: `${settings?.systemPrompt || DEFAULT_SYSTEM_PROMPT}\n\nTool policy: obey approval modes.\nQuestion mappings:\n${mappingHints || "(none)"}`
+      content: `${DEFAULT_SYSTEM_PROMPT}\n\nCurrent session: ${sessionId}`
     },
-    ...history.map((m) => ({ role: m.role === "assistant" ? "assistant" : m.role === "user" ? "user" : "tool", content: m.content, tool_call_id: m.toolCallId || undefined })),
     { role: "user", content: userMessage }
   ];
 
@@ -65,7 +38,7 @@ export async function runAgent(
 
   for (let step = 0; step < 6; step++) {
     const completion = await client.chat.completions.create({
-      model: provider.model,
+      model,
       messages,
       tools: oaTools,
       tool_choice: "auto",
@@ -77,9 +50,7 @@ export async function runAgent(
 
     if (!msg.tool_calls?.length) {
       const payload = normalizeFinalAssistantResponse(msg.content, generatedCards);
-      const final = { text: payload.text, cards: payload.cards, toolStatus };
-      await db.chatMessage.create({ data: { sessionId, role: "assistant", content: final.text, structured: final as any } });
-      return final;
+      return { text: payload.text, cards: payload.cards, toolStatus };
     }
 
     messages.push({ role: "assistant", tool_calls: msg.tool_calls });
@@ -94,41 +65,16 @@ export async function runAgent(
       const args = JSON.parse(call.function.arguments || "{}");
       toolStatus.push(`Using ${runtimeTool.label}...`);
 
-      if (runtimeTool.approvalMode === "deny") {
-        messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ error: "Tool denied by policy" }) });
-        continue;
-      }
-
-      const isApprovedTool = Boolean(opts?.approvedRequestId && opts?.approvedToolKey && opts.approvedToolKey === runtimeTool.key);
-      const approvedArgsMatch = isApprovedTool && stableStringify(opts?.approvedArgs) === stableStringify(args);
-      if (runtimeTool.approvalMode === "ask" && !approvedArgsMatch) {
-        const req = await createApprovalRequest(sessionId, runtimeTool.key, args, "This action may have side effects.");
-        const pending: AgentResult = {
-          text: `I need your approval before I run ${runtimeTool.label}.`,
-          cards: [],
-          toolStatus,
-          approvalRequest: { id: req.id, toolKey: runtimeTool.key, args, reason: req.reason || undefined }
-        };
-        await db.chatMessage.create({ data: { sessionId, role: "assistant", content: pending.text, structured: pending as any } });
-        return pending;
-      }
-
-      const start = Date.now();
       try {
         const result = await runtimeTool.execute(args);
         generatedCards.push(...normalizeToolResultToCards(runtimeTool.label, result, runtimeTool.cardRenderer));
-        await db.toolExecutionLog.create({ data: { toolKey: runtimeTool.key, args: args as any, result: result as any, success: true, latencyMs: Date.now() - start } });
-        await db.chatMessage.create({ data: { sessionId, role: "tool", content: JSON.stringify(result), toolName: runtimeTool.key, toolCallId: call.id } });
         messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
       } catch (error) {
         const message = (error as Error).message;
-        await db.toolExecutionLog.create({ data: { toolKey: runtimeTool.key, args: args as any, success: false, error: message, latencyMs: Date.now() - start } });
         messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ error: message }) });
       }
     }
   }
 
-  const fallback: AgentResult = { text: "I reached the tool-step limit. Please narrow the request.", cards: generatedCards, toolStatus };
-  await db.chatMessage.create({ data: { sessionId, role: "assistant", content: fallback.text, structured: fallback as any } });
-  return fallback;
+  return { text: "I reached the tool-step limit. Please narrow the request.", cards: generatedCards, toolStatus };
 }

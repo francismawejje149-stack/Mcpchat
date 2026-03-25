@@ -1,15 +1,21 @@
 import OpenAI from "openai";
-import { ProviderSettings } from "@prisma/client";
 
-export function getOpenAIClient(provider: ProviderSettings) {
+export type ProviderConfig = {
+  baseUrl: string;
+  apiKey?: string | null;
+  defaultHeaders?: Record<string, string> | null;
+  model: string;
+};
+
+export function getOpenAIClient(provider: ProviderConfig) {
   return new OpenAI({
     apiKey: provider.apiKey || "no-key",
     baseURL: provider.baseUrl,
-    defaultHeaders: (provider.defaultHeaders as Record<string, string> | null) ?? undefined
+    defaultHeaders: provider.defaultHeaders ?? undefined
   });
 }
 
-export async function testProviderConnection(provider: ProviderSettings) {
+export async function testProviderConnection(provider: ProviderConfig) {
   const client = getOpenAIClient(provider);
   const start = Date.now();
   const res = await client.chat.completions.create({
